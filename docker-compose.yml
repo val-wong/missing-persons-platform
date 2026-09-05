@@ -29,6 +29,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-missing_persons}
       POSTGRES_USER: ${POSTGRES_USER:-missing_persons}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      NCMEC_CLIENT_ID: ${NCMEC_CLIENT_ID}
+      NCMEC_CLIENT_SECRET: ${NCMEC_CLIENT_SECRET}
     ports:
       - "8000:8000"
     volumes:
