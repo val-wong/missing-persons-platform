@@ -2,12 +2,13 @@
 
 ## Implementation status
 
-The five mappings in "SAFE FIELD MAPPINGS" below, plus the four physical-detail
-mappings in "PHYSICAL DETAIL FIELD MAPPINGS (implemented)" further down, are
-implemented in `ingestion/sources/fbi/normalize.py` (`normalize_fbi_record`) and wired
-into `ingestion/sources/fbi/service.py`: raw-ingested items that the Phase 1 classifier
-marks `IN_SCOPE` are normalized, validated (only `Person.display_name` being unset is
-rejected — see docs/architecture.md), and persisted via
+The five mappings in "SAFE FIELD MAPPINGS" below, the four physical-detail mappings in
+"PHYSICAL DETAIL FIELD MAPPINGS (implemented)", and the weight/media mappings in
+"WEIGHT AND MEDIA SCHEMA (implemented)" further down, are all implemented in
+`ingestion/sources/fbi/normalize.py` (`normalize_fbi_record`) and wired into
+`ingestion/sources/fbi/service.py`: raw-ingested items that the Phase 1 classifier marks
+`IN_SCOPE` are normalized, validated (only `Person.display_name` being unset is rejected
+— see docs/architecture.md), and persisted via
 `ingestion.sources.base.persist_normalized_record`. Every other canonical field this
 document marks `NOT_AVAILABLE` or `AMBIGUOUS` is left `NULL` for FBI records, exactly as
 recommended below — this implementation does not relitigate those findings.
@@ -426,36 +427,147 @@ unusually long future value would fail loudly at insert time (a `String(64)` len
 violation), not silently truncate or corrupt, which is consistent with this platform's
 fail-closed philosophy, but is worth knowing if it is ever actually hit.
 
-### Still intentionally unmapped: height, weight, images, race
+### Still intentionally unmapped: height, race
 
-- **`height_min`/`height_max` → `Person.height_cm`**: the unit could not be proven with
-  the same rigor as weight (no sibling free-text `height` string exists to cross-check
-  against, unlike `weight`). Numeric range evidence (36–96, median 66) is consistent
-  with inches and implausible as centimeters for this population, but this is
-  circumstantial, not proof — **confidence: MEDIUM at best**. Independently, ~17% of
-  populated records report a genuine `height_min ≠ height_max` range, which a single
-  `height_cm` float cannot represent without a collapse policy (min/max/average) that
-  has not been decided. Both issues must be resolved before implementation.
-- **`weight`/`weight_min`/`weight_max` → `Person.weight_kg`**: unit is proven **HIGH**
-  confidence — the free-text `weight` field states "pounds" directly and its number
-  matches `weight_min`/`weight_max` exactly (e.g. `"130 pounds"` ↔ `130`/`130`). Despite
-  the proven unit, implementation is still blocked by (a) ~24% of populated records
-  being genuine ranges (up to 108 lb apart), and (b) some `weight` strings carrying an
-  explicit "at the time of her disappearance" qualifier not reflected anywhere on
-  `weight_min`/`weight_max` — the same current-vs-at-disappearance ambiguity already
-  identified for `age_min`/`age_max` above, now shown to also apply to weight for at
-  least a subset of records.
-- **`images` → `Person.photo_urls`**: every image object has exactly the same four
-  keys — `original` (the unscaled uploaded file), `large` (a pre-rendered display-size
-  rendition), `thumb` (an explicit small thumbnail), and `caption` (populated on 31% of
-  the 201 image objects sampled). `thumb` should never be the mapping target; `large`
-  vs. `original` is a legitimate policy choice, not something the evidence alone
-  settles. More importantly, collapsing to one URL string per image permanently drops
-  `caption` and the alternate-size variants — whether `photo_urls` should hold flat
-  URL strings or `{url, caption}`-style objects is an undecided data-shape convention,
-  not a migration (the column is already flexible JSONB).
+- **`height_min`/`height_max`**: the unit could not be proven with the same rigor as
+  weight (no sibling free-text `height` string exists to cross-check against, unlike
+  `weight`). Numeric range evidence (36–96, median 66) is consistent with inches and
+  implausible as centimeters for this population, but this is circumstantial, not
+  proof — **confidence: MEDIUM at best**. See "WEIGHT AND MEDIA SCHEMA (implemented)"
+  below for the schema this now has available (`height_min_cm`/`height_max_cm`/
+  `height_raw`/`height_temporal_context`) and why it stays entirely `NULL` for FBI.
 - **`race`/`race_raw`**: same normalized/verbatim relationship as hair/eyes was
   confirmed (100% containment), but `Person` has no `race` column, and adding one is a
   distinct product decision (whether to represent race at all, and how) rather than a
   mapping detail. `race`/`race_raw` remain source-only — preserved forever in
   `SourceSnapshot`, not promoted to the canonical schema in this pass.
+
+Weight and images were resolved in a follow-up schema/policy decision — see the next
+section.
+
+---
+
+## WEIGHT AND MEDIA SCHEMA (implemented)
+
+Following a schema/policy design review, `Person`'s height/weight columns were replaced
+and its photo column restructured (Alembic revision `bc850dd10a51`), and FBI weight/
+media normalization was implemented. `height_cm`, `weight_kg`, and `photo_urls` were
+verified 0/104-populated immediately before this migration — a clean replacement, not a
+data migration.
+
+### Schema
+
+Flat, typed columns on `Person` (not a nested JSON object) — consistent with every
+other field on this model, keeps native Postgres types/indexing available, and requires
+no changes to the generic `contributed_fields()` provenance machinery in
+`ingestion/sources/base.py`:
+
+```
+height_min_cm, height_max_cm   Float, nullable
+height_raw                     String(255), nullable
+height_temporal_context        String(64), nullable
+
+weight_min_kg, weight_max_kg   Float, nullable
+weight_raw                     String(255), nullable
+weight_temporal_context        String(64), nullable
+
+photos                          JSONB, nullable -- list of {url, full_url, thumbnail_url, caption}
+```
+
+The public API (`app/schemas/person.py`) composes `height`/`weight` into nested
+objects from these flat columns via a Pydantic `model_validator(mode="before")` —
+storage stays flat, the API reads as grouped measurements. `photos` defaults to `[]`
+(never `null`) in the API response so clients never need to null-check the list itself.
+
+### Why FBI height stays entirely NULL
+
+The schema exists and is ready, but FBI's `height_min`/`height_max` are **not**
+normalized into it. Unit confidence remains MEDIUM (see above) — converting on an
+unproven assumption risks silently corrupting every value, which this platform's
+fail-closed philosophy does not accept. `height_raw` would also stay `NULL` for FBI
+even once the unit question is resolved, for a separate reason: FBI has no free-text
+height phrase at all (only bare integers), so there is nothing to verbatim-copy.
+`test_normalize_never_populates_height_even_when_fbi_reports_it` in
+`test_fbi_normalize.py` is a regression test guarding against this being wired up by
+accident.
+
+### Weight: pounds → kg conversion
+
+FBI's `weight_min`/`weight_max` are proven pounds with **HIGH** confidence: the
+free-text `weight` field states "pounds" directly and its number matches these fields
+exactly (e.g. `"130 pounds"` ↔ `130`/`130`; `"130 to 140 pounds"` ↔ `130`/`140`).
+
+- **Conversion constant**: `1 lb = 0.45359237 kg` — the exact international avoirdupois
+  pound (1959 agreement), not an approximation.
+- **Precision**: rounded to 1 decimal place. This is finer than the source's own
+  precision (whole pounds, ≈0.45 kg apart), so no meaningful distinction between
+  adjacent source values is lost.
+- **Both endpoints converted independently** — `weight_min_kg` and `weight_max_kg` are
+  each `round(value * 0.45359237, 1)`. A point value (`weight_min == weight_max`)
+  naturally produces `weight_min_kg == weight_max_kg`; this falls out of applying the
+  same deterministic function to both endpoints, not from special-casing "point vs.
+  range." Ranges are never collapsed to a midpoint/min/max.
+- **`weight_raw`** preserves the FBI `weight` string byte-for-byte (blank → `NULL`).
+
+**A real conflicting-unit record, found while building this**: one stored record reads
+`weight="90 kg (198 pounds)"` with `weight_min=90`, `weight_max=198` — **not** a pounds
+range, but the *same* weight expressed in two different units. Converting both as
+pounds would have silently produced a nonsensical ~41–90 kg "range" for a single ~90 kg
+person. To guard against this (and any future record like it), `weight_min_kg`/
+`weight_max_kg` are refused (left `NULL`) whenever `weight` contains `"kg"` or
+`"kilogram"` — but `weight_raw` is still safely populated (a verbatim copy needs no
+unit trust) and `weight_temporal_context` is still evaluated independently. This
+affects exactly 1/104 records in the current data.
+
+### Weight temporal context
+
+`weight_temporal_context` is set to `"at_disappearance"` **only** via an exact,
+case-insensitive literal-phrase match against `weight_raw` — never inferred from
+narrative text, `missing_date`, or the mere absence of a qualifier (which means
+"unstated", never "current"). The matcher is built **only** from phrasings actually
+observed in the stored 104 IN_SCOPE records — enumerated by direct inspection before
+implementation:
+
+```
+"at the time of her disappearance"   (2 occurrences)
+"at time of disappearance"           (4 occurrences)
+```
+
+No other qualifier phrasing was found (a hypothetical "his disappearance" counterpart
+was not observed and is deliberately not included — built from evidence, not anticipated
+symmetry). Separately, 5 records carry a `"(approximately)"` qualifier — a statement
+about *precision*, not *timing* — which is correctly never matched by this phrase list;
+`weight_temporal_context` stays `NULL` for those.
+
+### Media: FBI `images` → `Person.photos`
+
+Key mapping (order preserved exactly as FBI returns it):
+
+| FBI key | → canonical key |
+|---|---|
+| `images[].large` | `photos[].url` |
+| `images[].original` | `photos[].full_url` |
+| `images[].thumb` | `photos[].thumbnail_url` |
+| `images[].caption` | `photos[].caption` |
+
+A malformed individual image entry (not a dict) is skipped, not fatal to the rest of
+the list — each image is an independent, self-contained object, unlike `aliases` (a
+single conceptual list where one bad entry calls the whole list into question). An
+empty or all-malformed `images` value normalizes to `NULL` (never `[]`), matching every
+other "nothing usable" convention in this module. These remain source-owned URLs
+(`fbi.gov`-hosted) — never downloaded, mirrored, transformed, or analyzed.
+
+### Provenance
+
+`CaseSource.contributed_fields` automatically picked up `weight_min_kg`, `weight_max_kg`,
+`weight_raw`, `weight_temporal_context`, and `photos` with **zero changes** to
+`ingestion/sources/base.py` — `NormalizedRecord.contributed_fields()` already flattens
+and JSON-safes whatever keys `person_fields`/`case_fields` contain, exactly as it
+already did for `hair_color`/`eye_color`/`aliases`/`distinguishing_characteristics`.
+Height fields are deliberately absent from `person_fields` for FBI, so they never
+appear in `contributed_fields` either — consistent with this module's standing
+convention that an unmapped field is *absent*, not present-and-null.
+
+Raw `SourceSnapshot` payloads are never read, modified, or reinterpreted by any of the
+above beyond normal `SELECT`s — they remain the authoritative, immutable record of
+exactly what FBI reported, independent of any future change to this normalization logic.
