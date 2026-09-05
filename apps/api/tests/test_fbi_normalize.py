@@ -86,10 +86,6 @@ def test_normalize_never_maps_fields_not_yet_evidenced_as_safe():
         "family_name",
         "suffix",
         "age",
-        "height_min_cm",
-        "height_max_cm",
-        "height_raw",
-        "height_temporal_context",
     ):
         assert field_name not in record.person_fields
 
@@ -198,6 +194,8 @@ def test_normalize_new_fields_remain_none_when_source_fields_absent():
     assert record.person_fields["eye_color"] is None
     assert record.person_fields["aliases"] is None
     assert record.person_fields["distinguishing_characteristics"] is None
+    assert record.person_fields["height_min_cm"] is None
+    assert record.person_fields["height_max_cm"] is None
     assert record.person_fields["weight_min_kg"] is None
     assert record.person_fields["weight_max_kg"] is None
     assert record.person_fields["weight_raw"] is None
@@ -205,23 +203,84 @@ def test_normalize_new_fields_remain_none_when_source_fields_absent():
     assert record.person_fields["photos"] is None
 
 
-# --- height: deliberately unmapped for FBI (unit confidence only MEDIUM) ------------
+# --- height (inches -> cm, range-preserving; no raw/temporal_context for FBI) -------
 
 
-def test_normalize_never_populates_height_even_when_fbi_reports_it():
-    """Regression test: FBI's height_min/height_max must NEVER be converted or
-    otherwise flow into a canonical height field, even though the raw item reports
-    them -- see the module docstring and docs/fbi-normalization.md for why (unit
-    confidence is only MEDIUM, unlike weight's proven-HIGH pounds evidence). A future
-    edit must not "helpfully" wire this up without a conscious, separate decision."""
+def test_normalize_height_point_value_converts_inches_to_cm():
     record = normalize_fbi_record(_item(height_min=66, height_max=66))
-    for field_name in (
-        "height_min_cm",
-        "height_max_cm",
-        "height_raw",
-        "height_temporal_context",
-    ):
-        assert field_name not in record.person_fields
+    assert record.person_fields["height_min_cm"] == 167.6
+    assert record.person_fields["height_max_cm"] == 167.6
+    assert record.person_fields["height_min_cm"] == record.person_fields["height_max_cm"]
+
+
+def test_normalize_height_range_preserves_both_endpoints_without_collapsing():
+    record = normalize_fbi_record(_item(height_min=64, height_max=65))
+    assert record.person_fields["height_min_cm"] == 162.6
+    assert record.person_fields["height_max_cm"] == 165.1
+    assert record.person_fields["height_min_cm"] != record.person_fields["height_max_cm"]
+
+
+def test_normalize_height_uses_exact_2_54_conversion_constant():
+    # 1 inch = 2.54 cm exactly; a value chosen so any rounding-constant drift would show.
+    record = normalize_fbi_record(_item(height_min=58, height_max=58))
+    assert record.person_fields["height_min_cm"] == 147.3  # 58 * 2.54 = 147.32 -> 147.3
+
+
+def test_normalize_height_stores_one_decimal_place_precision():
+    record = normalize_fbi_record(_item(height_min=59, height_max=59))
+    # 59 * 2.54 = 149.86 -> rounds to 149.9, not truncated or stored at full precision.
+    assert record.person_fields["height_min_cm"] == 149.9
+
+
+def test_normalize_height_missing_fields_are_none():
+    record = normalize_fbi_record(_item())
+    assert record.person_fields["height_min_cm"] is None
+    assert record.person_fields["height_max_cm"] is None
+
+    record2 = normalize_fbi_record(_item(height_min=66))  # height_max absent
+    assert record2.person_fields["height_min_cm"] is None
+    assert record2.person_fields["height_max_cm"] is None
+
+
+def test_normalize_height_malformed_numeric_fields_fail_closed():
+    """height_min/height_max as non-int must never be guessed at -- both endpoints are
+    refused together, mirroring weight's convention."""
+    record = normalize_fbi_record(_item(height_min="66", height_max=66))
+    assert record.person_fields["height_min_cm"] is None
+    assert record.person_fields["height_max_cm"] is None
+
+
+def test_normalize_height_outliers_are_preserved_not_rejected():
+    """No plausibility threshold -- an implausible-looking value is still converted and
+    preserved, per docs/fbi-normalization.md."""
+    record = normalize_fbi_record(_item(height_min=96, height_max=96))
+    assert record.person_fields["height_min_cm"] == 243.8
+
+
+def test_normalize_height_raw_is_always_absent_for_fbi():
+    """Absent, not merely None -- FBI has no free-text height field to copy from, so
+    `persist_normalized_record` never touches `Person.height_raw` at all, leaving any
+    existing value (or the column default) untouched rather than overwriting with NULL."""
+    record = normalize_fbi_record(_item(height_min=66, height_max=66))
+    assert "height_raw" not in record.person_fields
+
+
+def test_normalize_height_temporal_context_is_always_absent_for_fbi():
+    record = normalize_fbi_record(_item(height_min=66, height_max=66))
+    assert "height_temporal_context" not in record.person_fields
+
+
+def test_normalize_never_constructs_inferred_height_raw_text():
+    """Regression test: a canonical `_raw` field must contain source-provided wording
+    only. Normalization must never synthesize a human-readable string like "5 ft 6 in"
+    or "66 inches" from the numeric height_min/height_max fields, even though it would
+    be technically derivable -- FBI provides no such wording itself, so height_raw is
+    never even set (see test_normalize_height_raw_is_always_absent_for_fbi) -- this test
+    additionally guards that if it ever were set, it must never be platform-generated."""
+    record = normalize_fbi_record(_item(height_min=66, height_max=66))
+    assert record.person_fields.get("height_raw") is None
+    assert record.person_fields.get("height_raw") != "5 ft 6 in"
+    assert record.person_fields.get("height_raw") != "66 inches"
 
 
 # --- weight (pounds -> kg, range-preserving, temporal-context phrase match) ---------

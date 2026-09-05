@@ -349,10 +349,45 @@ def test_reprocessing_maps_weight_and_media_fields_and_stays_idempotent(db_sessi
     assert link.contributed_fields["weight_min_kg"] == 59.0
     assert link.contributed_fields["weight_max_kg"] == 63.5
     assert link.contributed_fields["photos"] == person.photos
-    # Height stays unmapped even though this test's item has no height fields at all --
-    # confirms nothing spuriously appears.
+    # This item has no height fields at all -- height_min_cm/height_max_cm are still
+    # present in contributed_fields (as null, like weight would be), but height_raw/
+    # height_temporal_context must stay absent entirely (FBI never supplies either).
     assert person.height_min_cm is None
-    for field_name in ("height_min_cm", "height_max_cm", "height_raw", "height_temporal_context"):
+    assert link.contributed_fields["height_min_cm"] is None
+    assert link.contributed_fields["height_max_cm"] is None
+    for field_name in ("height_raw", "height_temporal_context"):
+        assert field_name not in link.contributed_fields
+
+    second = reprocess_fbi_source_records(db_session, fbi_source, dry_run=False)
+    db_session.commit()
+
+    assert second.created == 0
+    assert second.updated == 0
+    assert second.unchanged == 1
+    assert db_session.query(Person).count() == 1
+    assert db_session.query(Case).count() == 1
+    assert db_session.query(CaseSource).count() == 1
+
+
+def test_reprocessing_converts_height_range_and_stays_idempotent(db_session, fbi_source):
+    item = _in_scope_item(uid="hist-height")
+    item.update(height_min=64, height_max=65)
+    record = _make_source_record(db_session, fbi_source, "hist-height")
+    _add_snapshot(db_session, record, item, fetched_at=NOW)
+
+    first = reprocess_fbi_source_records(db_session, fbi_source, dry_run=False)
+    db_session.commit()
+
+    assert first.created == 1
+    person = db_session.query(Person).one()
+    link = db_session.query(CaseSource).one()
+    assert person.height_min_cm == 162.6
+    assert person.height_max_cm == 165.1
+    assert person.height_raw is None
+    assert person.height_temporal_context is None
+    assert link.contributed_fields["height_min_cm"] == 162.6
+    assert link.contributed_fields["height_max_cm"] == 165.1
+    for field_name in ("height_raw", "height_temporal_context"):
         assert field_name not in link.contributed_fields
 
     second = reprocess_fbi_source_records(db_session, fbi_source, dry_run=False)

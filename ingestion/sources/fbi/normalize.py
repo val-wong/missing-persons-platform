@@ -21,12 +21,14 @@ these, not accidentally drift past them:
     carries no per-record signal.
   - given_name/middle_name/family_name/suffix: no structured name-component field
     exists; only `title` (whole display name) is available.
-  - height_min_cm, height_max_cm, height_raw, height_temporal_context: the schema
-    supports height (see docs/fbi-normalization.md), but FBI's `height_min`/
-    `height_max` unit was only ever confirmed to MEDIUM confidence (no sibling
-    free-text field to cross-check against, unlike weight) -- left NULL until that
-    improves. Do not populate these from FBI data; this is a deliberate policy
-    decision, not an oversight (see the regression test in test_fbi_normalize.py).
+  - height_raw: FBI has no dedicated free-text height field at all (checked
+    exhaustively across every text-shaped field in the schema, not just an
+    obviously-named one -- see docs/fbi-normalization.md) -- there is nothing to
+    verbatim-copy. Never construct a string like "5 ft 6 in" here: a canonical `_raw`
+    field must contain source-provided wording only, never platform-generated text.
+  - height_temporal_context: no structured evidence supports any temporal
+    interpretation for FBI height (unlike weight's documented "at the time of ...
+    disappearance" phrasing) -- left NULL, not guessed as "current."
   - `hair` / `eyes` / `race` (the FBI-normalized/controlled-vocabulary variants, as
     opposed to `hair_raw` / `eyes_raw` / `race_raw`): deliberately not used as the
     source for `hair_color` / `eye_color` below -- the field-evidence audit (see
@@ -51,6 +53,15 @@ FBI_INVESTIGATING_AGENCY = "Federal Bureau of Investigation"
 
 _DOB_LIST_FIELD = "dates_of_birth_used"
 _DOB_FORMAT = "%B %d, %Y"
+
+# Exact conversion, per international agreement -- not an approximation. FBI's
+# `height_min`/`height_max` were confirmed to be inches with HIGH confidence via a
+# dedicated evidence review: multiple stored records' numeric values (including one
+# min/max range) exactly matched independently reported feet/inches figures explicitly
+# attributed to the FBI poster for the same case -- see docs/fbi-normalization.md.
+# Stored to 1 decimal place, the same precision policy already established for weight.
+_IN_TO_CM = 2.54
+_HEIGHT_CM_PRECISION = 1
 
 # Exact international avoirdupois pound, per the 1959 international yard-and-pound
 # agreement -- not an approximation. FBI's `weight_min`/`weight_max` are proven pounds
@@ -83,6 +94,20 @@ _FBI_IMAGE_KEY_MAP = {
     "thumb": "thumbnail_url",
     "caption": "caption",
 }
+
+
+def _inches_to_cm(value: int) -> float:
+    return round(value * _IN_TO_CM, _HEIGHT_CM_PRECISION)
+
+
+def _height_cm_range(height_min: object, height_max: object) -> tuple[float | None, float | None]:
+    """Convert FBI's height_min/height_max (inches) to cm, preserving both endpoints
+    separately -- never collapsed to a midpoint/min/max. Fails closed (both None) when
+    either endpoint isn't an int; no conflicting-unit marker check is needed here (no
+    evidence of a mixed-unit case for height, unlike weight's "90 kg (198 pounds)")."""
+    if not isinstance(height_min, int) or not isinstance(height_max, int):
+        return None, None
+    return _inches_to_cm(height_min), _inches_to_cm(height_max)
 
 
 def _pounds_to_kg(value: int) -> float:
@@ -148,6 +173,7 @@ def normalize_fbi_record(item: dict[str, Any]) -> NormalizedRecord:
     weight_min_kg, weight_max_kg = _weight_kg_range(
         item.get("weight_min"), item.get("weight_max"), weight_raw
     )
+    height_min_cm, height_max_cm = _height_cm_range(item.get("height_min"), item.get("height_max"))
 
     person_fields: dict[str, Any] = {
         "display_name": blank_to_none(item.get("title")),
@@ -158,13 +184,15 @@ def normalize_fbi_record(item: dict[str, Any]) -> NormalizedRecord:
         "eye_color": blank_to_none(item.get("eyes_raw")),
         "aliases": clean_string_list(item.get("aliases")),
         "distinguishing_characteristics": blank_to_none(item.get("scars_and_marks")),
+        "height_min_cm": height_min_cm,
+        "height_max_cm": height_max_cm,
+        # height_raw/height_temporal_context: deliberately absent -- see module
+        # docstring (no free-text field to copy; no temporal evidence).
         "weight_min_kg": weight_min_kg,
         "weight_max_kg": weight_max_kg,
         "weight_raw": blank_to_none(weight_raw),
         "weight_temporal_context": _weight_temporal_context(weight_raw),
         "photos": _normalize_fbi_images(item.get("images")),
-        # height_min_cm/height_max_cm/height_raw/height_temporal_context: deliberately
-        # absent -- see module docstring.
     }
     case_fields: dict[str, Any] = {
         "circumstances": blank_to_none(item.get("description")),

@@ -3,8 +3,8 @@
 ## Implementation status
 
 The five mappings in "SAFE FIELD MAPPINGS" below, the four physical-detail mappings in
-"PHYSICAL DETAIL FIELD MAPPINGS (implemented)", and the weight/media mappings in
-"WEIGHT AND MEDIA SCHEMA (implemented)" further down, are all implemented in
+"PHYSICAL DETAIL FIELD MAPPINGS (implemented)", and the height/weight/media mappings in
+"HEIGHT, WEIGHT AND MEDIA SCHEMA (implemented)" further down, are all implemented in
 `ingestion/sources/fbi/normalize.py` (`normalize_fbi_record`) and wired into
 `ingestion/sources/fbi/service.py`: raw-ingested items that the Phase 1 classifier marks
 `IN_SCOPE` are normalized, validated (only `Person.display_name` being unset is rejected
@@ -427,27 +427,20 @@ unusually long future value would fail loudly at insert time (a `String(64)` len
 violation), not silently truncate or corrupt, which is consistent with this platform's
 fail-closed philosophy, but is worth knowing if it is ever actually hit.
 
-### Still intentionally unmapped: height, race
+### Still intentionally unmapped: race
 
-- **`height_min`/`height_max`**: the unit could not be proven with the same rigor as
-  weight (no sibling free-text `height` string exists to cross-check against, unlike
-  `weight`). Numeric range evidence (36–96, median 66) is consistent with inches and
-  implausible as centimeters for this population, but this is circumstantial, not
-  proof — **confidence: MEDIUM at best**. See "WEIGHT AND MEDIA SCHEMA (implemented)"
-  below for the schema this now has available (`height_min_cm`/`height_max_cm`/
-  `height_raw`/`height_temporal_context`) and why it stays entirely `NULL` for FBI.
 - **`race`/`race_raw`**: same normalized/verbatim relationship as hair/eyes was
   confirmed (100% containment), but `Person` has no `race` column, and adding one is a
   distinct product decision (whether to represent race at all, and how) rather than a
   mapping detail. `race`/`race_raw` remain source-only — preserved forever in
   `SourceSnapshot`, not promoted to the canonical schema in this pass.
 
-Weight and images were resolved in a follow-up schema/policy decision — see the next
-section.
+Weight, images, and (after a subsequent evidence review) height were all resolved in
+follow-up schema/policy decisions — see the next two sections.
 
 ---
 
-## WEIGHT AND MEDIA SCHEMA (implemented)
+## HEIGHT, WEIGHT AND MEDIA SCHEMA (implemented)
 
 Following a schema/policy design review, `Person`'s height/weight columns were replaced
 and its photo column restructured (Alembic revision `bc850dd10a51`), and FBI weight/
@@ -479,17 +472,67 @@ objects from these flat columns via a Pydantic `model_validator(mode="before")` 
 storage stays flat, the API reads as grouped measurements. `photos` defaults to `[]`
 (never `null`) in the API response so clients never need to null-check the list itself.
 
-### Why FBI height stays entirely NULL
+### Height (implemented after a dedicated unit-confirmation review)
 
-The schema exists and is ready, but FBI's `height_min`/`height_max` are **not**
-normalized into it. Unit confidence remains MEDIUM (see above) — converting on an
-unproven assumption risks silently corrupting every value, which this platform's
-fail-closed philosophy does not accept. `height_raw` would also stay `NULL` for FBI
-even once the unit question is resolved, for a separate reason: FBI has no free-text
-height phrase at all (only bare integers), so there is nothing to verbatim-copy.
-`test_normalize_never_populates_height_even_when_fbi_reports_it` in
-`test_fbi_normalize.py` is a regression test guarding against this being wired up by
-accident.
+At the time the schema above was added, FBI's `height_min`/`height_max` were left
+entirely `NULL` because the inches-vs-centimeters question was only MEDIUM confidence
+(no sibling free-text `height` field to cross-check against, unlike `weight`). A
+follow-up, dedicated evidence-confirmation task resolved this to **HIGH** confidence —
+**important evidentiary note**: this was established via multiple cross-correlated FBI
+wanted-poster examples (numeric API values compared against independently reported
+feet/inches figures for the same cases, explicitly attributed to the FBI poster), not
+via an explicit published FBI API field contract naming the unit — fbi.gov itself could
+not be fetched directly by the tooling available for that review (blocked at the
+network level on every path tried, including FBI's own developer documentation page).
+The evidentiary basis is transparently secondhand corroboration, not a first-party
+specification, even though the confidence level it supports is HIGH.
+
+Three stored records were checked directly against independently reported physical
+descriptions attributed to the same FBI posters:
+
+- Two point values (`height_min == height_max`) matched exactly under the inches
+  interpretation, including one case where five other fields (weight, hair, eye color,
+  race, date of birth) also matched simultaneously.
+- One range value (`height_min != height_max`) matched a human-readable range ("five
+  feet four and five feet five") exactly, endpoint for endpoint.
+- No example, across any source checked, was consistent with centimeters.
+
+`height_min`/`height_max` → `Person.height_min_cm`/`height_max_cm` is now implemented:
+
+- **Conversion constant**: `1 inch = 2.54 cm` exactly.
+- **Precision**: rounded to 1 decimal place — the same policy already established for
+  weight.
+- **Both endpoints converted independently**, exactly mirroring `_weight_kg_range`: a
+  point value naturally produces equal min/max cm values; a range is never collapsed to
+  a midpoint, min, or max.
+- **No conflicting-unit guard** (unlike weight's `"kg"`/`"kilogram"` marker check) — no
+  evidence of a mixed-unit case exists for height in the stored data; this guard is
+  weight-specific until (if ever) similar contradictory evidence appears for height.
+- **Outliers are preserved, not rejected.** The observed range is roughly 36–96 inches;
+  an unusually high or low value (e.g. 96 in) is still converted and stored as-is — no
+  plausibility threshold is applied. Introducing one would mean this platform silently
+  judging which reported values to trust, which is inconsistent with how every other
+  field is handled. Anomaly monitoring, if ever wanted, belongs in a separate read-only
+  report tool (matching `classifier_report_cli`/`normalization_report_cli`), not inside
+  `normalize_fbi_record`.
+- **`height_raw` stays `NULL` for FBI, permanently** (not merely "for now"): FBI has no
+  free-text height phrase anywhere in its schema (checked exhaustively across every
+  text field, not just an obviously-named one). A canonical `_raw` field must contain
+  source-provided wording only — normalization must never construct a string like
+  "5 ft 6 in" or "66 inches" itself. `test_normalize_never_constructs_inferred_height_raw_text`
+  in `test_fbi_normalize.py` guards this directly.
+- **`height_temporal_context` stays `NULL` for FBI**: no structured evidence supports any
+  temporal interpretation for height (unlike weight's documented "at the time of ...
+  disappearance" phrasing) — never guessed as "current."
+- **Provenance**: `height_min_cm`/`height_max_cm` flow into `CaseSource.contributed_fields`
+  automatically (same generic mechanism as every other field); `height_raw`/
+  `height_temporal_context` are never added as keys to `person_fields` for FBI, so they
+  never appear in `contributed_fields` either.
+
+Raw `SourceSnapshot` payloads remain the authoritative, immutable record of exactly
+what FBI reported — nothing about this mapping reads, modifies, or reinterprets them
+beyond normal `SELECT`s, and the mapping can be revisited later without any loss of the
+original data if the unit evidence were ever found to need revision.
 
 ### Weight: pounds → kg conversion
 

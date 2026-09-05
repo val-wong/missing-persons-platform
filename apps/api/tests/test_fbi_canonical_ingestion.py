@@ -201,12 +201,33 @@ def test_weight_and_media_fields_are_persisted_and_recorded_in_contributed_field
     assert link.contributed_fields["photos"] == person.photos
 
 
-def test_fbi_height_stays_null_and_absent_from_contributed_fields(db_session, fbi_source):
-    """Even though this item reports height_min/height_max, FBI height mapping is
-    deliberately disabled (unit confidence only MEDIUM) -- canonical height columns
-    must stay NULL and out of contributed_fields entirely."""
+def test_fbi_height_is_converted_and_recorded_in_contributed_fields(db_session, fbi_source):
+    """FBI height mapping is now enabled (HIGH-confidence evidence review, see
+    docs/fbi-normalization.md) -- height_min_cm/height_max_cm must be populated and
+    recorded in contributed_fields, while height_raw/height_temporal_context stay NULL
+    and absent (FBI provides neither wording nor temporal evidence)."""
     item = _in_scope_item(uid="m-height")
-    item.update(height_min=66, height_max=66)
+    item.update(height_min=64, height_max=65)
+    page = FBIListResponse(total=1, page=1, items=[item])
+    stats = run_fbi_ingestion(db_session, FakeFBIClient([page]), max_pages=1)
+
+    assert stats.canonical_created == 1
+    person = db_session.query(Person).one()
+    link = db_session.query(CaseSource).one()
+
+    assert person.height_min_cm == 162.6
+    assert person.height_max_cm == 165.1
+    assert person.height_raw is None
+    assert person.height_temporal_context is None
+
+    assert link.contributed_fields["height_min_cm"] == 162.6
+    assert link.contributed_fields["height_max_cm"] == 165.1
+    assert "height_raw" not in link.contributed_fields
+    assert "height_temporal_context" not in link.contributed_fields
+
+
+def test_fbi_height_stays_null_when_source_fields_absent(db_session, fbi_source):
+    item = _in_scope_item(uid="m-no-height")
     page = FBIListResponse(total=1, page=1, items=[item])
     stats = run_fbi_ingestion(db_session, FakeFBIClient([page]), max_pages=1)
 
@@ -218,7 +239,9 @@ def test_fbi_height_stays_null_and_absent_from_contributed_fields(db_session, fb
     assert person.height_max_cm is None
     assert person.height_raw is None
     assert person.height_temporal_context is None
-    for field_name in ("height_min_cm", "height_max_cm", "height_raw", "height_temporal_context"):
+    assert link.contributed_fields["height_min_cm"] is None
+    assert link.contributed_fields["height_max_cm"] is None
+    for field_name in ("height_raw", "height_temporal_context"):
         assert field_name not in link.contributed_fields
 
 
