@@ -1,0 +1,9 @@
+[project]
+name = "missing-persons-api"
+version = "0.1.0"
+description = "Public-data aggregation platform for missing-person records (API service)"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
