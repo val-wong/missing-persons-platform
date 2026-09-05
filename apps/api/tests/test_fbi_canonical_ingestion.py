@@ -118,6 +118,48 @@ def test_changed_payload_updates_existing_canonical_case_not_a_new_one(db_sessio
     assert case.circumstances == "Updated circumstances."
 
 
+def test_physical_detail_fields_are_persisted_and_recorded_in_contributed_fields(db_session, fbi_source):
+    item = _in_scope_item(uid="m-physical")
+    item.update(
+        hair="black",
+        hair_raw="Black (shoulder length)",
+        eyes="brown",
+        eyes_raw="Brown",
+        aliases=["Johnny", "J.D."],
+        scars_and_marks="Scar on left forearm.",
+    )
+    page = FBIListResponse(total=1, page=1, items=[item])
+    stats = run_fbi_ingestion(db_session, FakeFBIClient([page]), max_pages=1)
+
+    assert stats.canonical_created == 1
+    person = db_session.query(Person).one()
+    link = db_session.query(CaseSource).one()
+
+    assert person.hair_color == "Black (shoulder length)"
+    assert person.eye_color == "Brown"
+    assert person.aliases == ["Johnny", "J.D."]
+    assert person.distinguishing_characteristics == "Scar on left forearm."
+
+    # Provenance: contributed_fields must reflect exactly what this SourceRecord
+    # contributed, including these newly-mapped fields.
+    assert link.contributed_fields["hair_color"] == "Black (shoulder length)"
+    assert link.contributed_fields["eye_color"] == "Brown"
+    assert link.contributed_fields["aliases"] == ["Johnny", "J.D."]
+    assert link.contributed_fields["distinguishing_characteristics"] == "Scar on left forearm."
+
+
+def test_physical_detail_fields_stay_none_when_source_fields_absent(db_session, fbi_source):
+    page = FBIListResponse(total=1, page=1, items=[_in_scope_item()])
+    stats = run_fbi_ingestion(db_session, FakeFBIClient([page]), max_pages=1)
+
+    assert stats.canonical_created == 1
+    person = db_session.query(Person).one()
+    assert person.hair_color is None
+    assert person.eye_color is None
+    assert person.aliases is None
+    assert person.distinguishing_characteristics is None
+
+
 def test_malformed_item_with_blank_title_fails_validation_without_aborting_batch(db_session, fbi_source):
     good = _in_scope_item(uid="good-1")
     bad = _in_scope_item(uid="bad-1", title="   ")

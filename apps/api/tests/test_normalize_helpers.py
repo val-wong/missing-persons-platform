@@ -1,7 +1,7 @@
 from datetime import date
 
 from ingestion.normalize.dates import parse_single_date_from_list
-from ingestion.normalize.text import blank_to_none
+from ingestion.normalize.text import blank_to_none, clean_string_list
 
 
 def test_blank_to_none_rejects_non_strings():
@@ -44,3 +44,28 @@ def test_parse_single_date_from_list_rejects_non_string_entry():
 
 def test_parse_single_date_from_list_rejects_format_mismatch():
     assert parse_single_date_from_list(["2000-01-01"], "%B %d, %Y") is None
+
+
+def test_clean_string_list_accepts_list_of_strings_verbatim():
+    assert clean_string_list(["Johnny", "J.D."]) == ["Johnny", "J.D."]
+
+
+def test_clean_string_list_does_not_reorder_or_dedupe():
+    assert clean_string_list(["B", "A", "B"]) == ["B", "A", "B"]
+
+
+def test_clean_string_list_rejects_non_list_input():
+    assert clean_string_list("Johnny") is None
+    assert clean_string_list(None) is None
+
+
+def test_clean_string_list_rejects_empty_list():
+    assert clean_string_list([]) is None
+
+
+def test_clean_string_list_rejects_whole_list_on_any_non_string_element():
+    assert clean_string_list(["Johnny", 123]) is None
+
+
+def test_clean_string_list_rejects_whole_list_on_any_blank_element():
+    assert clean_string_list(["Johnny", "   "]) is None

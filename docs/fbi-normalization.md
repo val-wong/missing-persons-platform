@@ -2,19 +2,24 @@
 
 ## Implementation status
 
-The five mappings in "SAFE FIELD MAPPINGS" below are implemented in
-`ingestion/sources/fbi/normalize.py` (`normalize_fbi_record`) and wired into
-`ingestion/sources/fbi/service.py`: raw-ingested items that the Phase 1 classifier
+The five mappings in "SAFE FIELD MAPPINGS" below, plus the four physical-detail
+mappings in "PHYSICAL DETAIL FIELD MAPPINGS (implemented)" further down, are
+implemented in `ingestion/sources/fbi/normalize.py` (`normalize_fbi_record`) and wired
+into `ingestion/sources/fbi/service.py`: raw-ingested items that the Phase 1 classifier
 marks `IN_SCOPE` are normalized, validated (only `Person.display_name` being unset is
 rejected — see docs/architecture.md), and persisted via
 `ingestion.sources.base.persist_normalized_record`. Every other canonical field this
-document marked `NOT_AVAILABLE` or `AMBIGUOUS` is left `NULL` for FBI records, exactly
-as recommended below — this implementation does not relitigate those findings. See
-"Physical description / photo fields" near the end of this document for a newer,
-separate discovery pass (population confirmed, mapping not yet implemented).
+document marks `NOT_AVAILABLE` or `AMBIGUOUS` is left `NULL` for FBI records, exactly as
+recommended below — this implementation does not relitigate those findings.
 
-The rest of this document is the original discovery-only analysis that justified those
-five mappings; it is retained as-is below for traceability.
+The rest of this document is the original discovery-only analysis that justified the
+first five mappings; it is retained as-is below for traceability. "Physical description
+/ photo fields" (further down) is a later, separate discovery pass that added
+`height_min`/`height_max`/`weight`/`hair`/`hair_raw`/`eyes`/`eyes_raw`/`race`/
+`race_raw`/`scars_and_marks`/`images`/`aliases` to the picture; a subsequent
+field-evidence audit resolved four of those fields to HIGH confidence (see "PHYSICAL
+DETAIL FIELD MAPPINGS (implemented)"), now implemented, while height, weight, images,
+and race remain deliberately unmapped for the reasons given there.
 
 ---
 
@@ -354,3 +359,103 @@ higher-ambiguity siblings, was judged not worth a second partial implementation 
 text → free text, same "verbatim copy is not inference" reasoning already applied to
 `description` → `Case.circumstances`) and is the best next candidate once this batch of
 mappings is picked up.
+
+---
+
+## PHYSICAL DETAIL FIELD MAPPINGS (implemented)
+
+A follow-up field-evidence audit (read-only, same 104 `IN_SCOPE` records) resolved four
+of the open questions above to `HIGH` confidence. These four are now implemented in
+`normalize_fbi_record`; the rest of this section records the evidence and reasoning so
+a future editor doesn't have to re-derive it.
+
+| FBI field | → Canonical field | Transformation | Confidence |
+|---|---|---|---|
+| `hair_raw` | `Person.hair_color` | verbatim copy, blank/absent → `NULL` | **HIGH** |
+| `eyes_raw` | `Person.eye_color` | verbatim copy, blank/absent → `NULL` | **HIGH** |
+| `aliases` | `Person.aliases` | deterministic `list[str]` copy, empty/absent/any-non-string-or-blank-element → `NULL` | **HIGH** |
+| `scars_and_marks` | `Person.distinguishing_characteristics` | verbatim copy, blank/absent → `NULL` | **HIGH** |
+
+### Why `_raw`, never the FBI-normalized `hair`/`eyes` bucket
+
+`hair` and `eyes` are FBI's own small, fixed, lowercase controlled vocabularies (4 and 6
+distinct values respectively, across the full `IN_SCOPE` sample) — evidently a bucketed
+classification FBI derives for its own search/filter facets, not the literal reported
+description. `hair_raw`/`eyes_raw` carry the fuller, human-authored text (46 and 10
+distinct values respectively), including detail the bucketed field discards (length,
+styling, dye, compound descriptions, accessory notes).
+
+This was confirmed structurally, not assumed from field naming: for every populated
+pair in the sample, the lowercased `_raw` value **starts with or contains** the
+corresponding bucketed value (`hair`: 96/96; `eyes`: 98/98 — 100% in both cases; the
+same check on `race`/`race_raw`, not mapped, was also 96/96). The bucketed field is
+never independent of, or in conflict with, its `_raw` counterpart in this sample — it
+is a strict simplification of it.
+
+Per this platform's core principle (docs/architecture.md: canonical data must be
+traceable to, and faithful to, what the source actually reported), the `_raw` variant
+is the correct mapping target: it preserves what FBI's poster literally says, rather
+than substituting FBI's own downstream, lossy re-bucketing. `hair`/`eyes` are never used
+as a fallback when `_raw` is absent — code and tests both enforce this (there is no
+plausible case in the current schema where `_raw` is null but the bucketed value would
+be a safe substitute, since the bucket is *derived from* the raw text, not an
+independent report).
+
+### `aliases`
+
+Verified: always `list[str]` when populated (12/104, 11.5%), no blank elements, no
+internal duplicates in any observed record. `ingestion.normalize.text.clean_string_list`
+accepts the list verbatim only when it is a non-empty list where every element is a
+non-blank string; any other shape (not a list, empty, or containing a non-string/blank
+element) is rejected **as a whole** — this never partially filters or rewrites
+individual alias entries, per the "do not invent, normalize, split, deduplicate" rule.
+
+### `scars_and_marks`
+
+Always `str`/`NoneType` (44/104 populated, 42%), free-text prose (2–62 words). Same
+"verbatim copy of free text is data movement, not inference" reasoning already
+established for `description` → `Case.circumstances`: copied byte-for-byte via
+`blank_to_none`, with no fact extraction from the prose.
+
+### Length note
+
+`Person.hair_color`/`Person.eye_color` are `String(64)`. The longest observed
+`hair_raw`/`eyes_raw` value in the current dataset is 56 characters (well within the
+column width). This is not a mapping-safety guarantee for all future FBI data — an
+unusually long future value would fail loudly at insert time (a `String(64)` length
+violation), not silently truncate or corrupt, which is consistent with this platform's
+fail-closed philosophy, but is worth knowing if it is ever actually hit.
+
+### Still intentionally unmapped: height, weight, images, race
+
+- **`height_min`/`height_max` → `Person.height_cm`**: the unit could not be proven with
+  the same rigor as weight (no sibling free-text `height` string exists to cross-check
+  against, unlike `weight`). Numeric range evidence (36–96, median 66) is consistent
+  with inches and implausible as centimeters for this population, but this is
+  circumstantial, not proof — **confidence: MEDIUM at best**. Independently, ~17% of
+  populated records report a genuine `height_min ≠ height_max` range, which a single
+  `height_cm` float cannot represent without a collapse policy (min/max/average) that
+  has not been decided. Both issues must be resolved before implementation.
+- **`weight`/`weight_min`/`weight_max` → `Person.weight_kg`**: unit is proven **HIGH**
+  confidence — the free-text `weight` field states "pounds" directly and its number
+  matches `weight_min`/`weight_max` exactly (e.g. `"130 pounds"` ↔ `130`/`130`). Despite
+  the proven unit, implementation is still blocked by (a) ~24% of populated records
+  being genuine ranges (up to 108 lb apart), and (b) some `weight` strings carrying an
+  explicit "at the time of her disappearance" qualifier not reflected anywhere on
+  `weight_min`/`weight_max` — the same current-vs-at-disappearance ambiguity already
+  identified for `age_min`/`age_max` above, now shown to also apply to weight for at
+  least a subset of records.
+- **`images` → `Person.photo_urls`**: every image object has exactly the same four
+  keys — `original` (the unscaled uploaded file), `large` (a pre-rendered display-size
+  rendition), `thumb` (an explicit small thumbnail), and `caption` (populated on 31% of
+  the 201 image objects sampled). `thumb` should never be the mapping target; `large`
+  vs. `original` is a legitimate policy choice, not something the evidence alone
+  settles. More importantly, collapsing to one URL string per image permanently drops
+  `caption` and the alternate-size variants — whether `photo_urls` should hold flat
+  URL strings or `{url, caption}`-style objects is an undecided data-shape convention,
+  not a migration (the column is already flexible JSONB).
+- **`race`/`race_raw`**: same normalized/verbatim relationship as hair/eyes was
+  confirmed (100% containment), but `Person` has no `race` column, and adding one is a
+  distinct product decision (whether to represent race at all, and how) rather than a
+  mapping detail. `race`/`race_raw` remain source-only — preserved forever in
+  `SourceSnapshot`, not promoted to the canonical schema in this pass.

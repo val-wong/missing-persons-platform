@@ -284,6 +284,45 @@ def test_dry_run_against_mixed_data_reports_all_counters_without_writing(db_sess
     assert db_session.query(CaseSource).count() == 0
 
 
+def test_reprocessing_maps_physical_detail_fields_and_stays_idempotent(db_session, fbi_source):
+    item = _in_scope_item(uid="hist-physical")
+    item.update(
+        hair="black",
+        hair_raw="Black (shoulder length)",
+        eyes="brown",
+        eyes_raw="Brown",
+        aliases=["Johnny", "J.D."],
+        scars_and_marks="Scar on left forearm.",
+    )
+    record = _make_source_record(db_session, fbi_source, "hist-physical")
+    _add_snapshot(db_session, record, item, fetched_at=NOW)
+
+    first = reprocess_fbi_source_records(db_session, fbi_source, dry_run=False)
+    db_session.commit()
+
+    assert first.created == 1
+    person = db_session.query(Person).one()
+    link = db_session.query(CaseSource).one()
+    assert person.hair_color == "Black (shoulder length)"
+    assert person.eye_color == "Brown"
+    assert person.aliases == ["Johnny", "J.D."]
+    assert person.distinguishing_characteristics == "Scar on left forearm."
+    assert link.contributed_fields["hair_color"] == "Black (shoulder length)"
+    assert link.contributed_fields["eye_color"] == "Brown"
+    assert link.contributed_fields["aliases"] == ["Johnny", "J.D."]
+    assert link.contributed_fields["distinguishing_characteristics"] == "Scar on left forearm."
+
+    second = reprocess_fbi_source_records(db_session, fbi_source, dry_run=False)
+    db_session.commit()
+
+    assert second.created == 0
+    assert second.updated == 0
+    assert second.unchanged == 1
+    assert db_session.query(Person).count() == 1
+    assert db_session.query(Case).count() == 1
+    assert db_session.query(CaseSource).count() == 1
+
+
 def test_actual_backfill_then_second_run_is_idempotent(db_session, fbi_source):
     for i in range(5):
         record = _make_source_record(db_session, fbi_source, f"idem-{i}")
