@@ -142,6 +142,19 @@ docker compose run --rm api python -m ingestion.sources.fbi.normalization_report
 See [docs/fbi-normalization.md](docs/fbi-normalization.md) for the implemented mappings,
 the fields deliberately left unmapped, and why.
 
+Historical reprocessing / backfill: replays already-stored `SourceSnapshot`s (latest
+per `SourceRecord`) through classify/normalize/validate/persist, for records that
+predate the canonical pipeline or were missed by an earlier classifier/normalizer bug.
+Never fetches the FBI API. Defaults to a dry run (zero canonical writes):
+
+```bash
+docker compose run --rm api python -m ingestion.sources.fbi.reprocess_cli
+docker compose run --rm api python -m ingestion.sources.fbi.reprocess_cli --execute
+```
+
+See [docs/fbi-reprocessing.md](docs/fbi-reprocessing.md) for the full flow, output
+counters, and idempotency guarantees.
+
 ## Database migrations
 
 This project uses Alembic. After changing a model in `apps/api/app/models/`, generate a
