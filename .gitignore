@@ -11,3 +11,8 @@ data/raw/*
 data/imports/*
 !data/raw/.gitkeep
 !data/imports/.gitkeep
+
+# Frontend (apps/web)
+node_modules/
+dist/
+.env.local

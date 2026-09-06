@@ -38,5 +38,23 @@ services:
       # Mounted as a sibling of app/ so `python -m ingestion...` resolves from /app.
       - ./ingestion:/app/ingestion
 
+  web:
+    image: node:20-slim
+    working_dir: /app
+    # No frontend Dockerfile -- a stock Node image plus a two-step command is enough
+    # for local dev, and avoids maintaining a second build definition just for this.
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    environment:
+      # The browser (not this container) makes the API calls, so this must be a URL
+      # reachable from the host -- the API's published port, not the compose network's
+      # internal "api" hostname.
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000/api/v1}
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+
 volumes:
   db_data:
+  web_node_modules:
