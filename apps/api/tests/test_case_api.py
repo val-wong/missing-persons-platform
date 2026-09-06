@@ -105,12 +105,43 @@ def test_search_by_name_query(client, db_session):
     assert body["items"][0]["display_name"] == "ALEX SAMPLE"
 
 
+def test_search_is_case_insensitive(client, db_session):
+    source = _make_source(db_session, "fbi")
+    _make_case(db_session, source=source, external_id="1", display_name="ALEX SAMPLE")
+
+    lower = client.get(API, params={"q": "sample"})
+    upper = client.get(API, params={"q": "SAMPLE"})
+    mixed = client.get(API, params={"q": "SaMpLe"})
+
+    assert lower.json()["total"] == upper.json()["total"] == mixed.json()["total"] == 1
+
+
 def test_filter_by_missing_state(client, db_session):
     source = _make_source(db_session, "fbi")
     _make_case(db_session, source=source, external_id="1", missing_state="Nevada")
     _make_case(db_session, source=source, external_id="2", missing_state="Ohio")
 
     resp = client.get(API, params={"missing_state": "nevada"})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
+
+
+def test_filter_by_missing_city(client, db_session):
+    source = _make_source(db_session, "fbi")
+    _make_case(db_session, source=source, external_id="1", missing_city="Springfield")
+    _make_case(db_session, source=source, external_id="2", missing_city="Shelbyville")
+
+    resp = client.get(API, params={"missing_city": "springfield"})
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
+
+
+def test_filter_by_missing_country(client, db_session):
+    source = _make_source(db_session, "fbi")
+    _make_case(db_session, source=source, external_id="1", missing_country="Canada")
+    _make_case(db_session, source=source, external_id="2", missing_country="Mexico")
+
+    resp = client.get(API, params={"missing_country": "canada"})
     assert resp.status_code == 200
     assert resp.json()["total"] == 1
 
@@ -154,6 +185,7 @@ def test_filter_by_source(client, db_session):
     resp = client.get(API, params={"source": "fbi"})
     assert resp.status_code == 200
     assert resp.json()["total"] == 1
+    assert resp.json()["items"][0]["source_codes"] == ["fbi"]
     assert resp.json()["items"][0]["source_names"] == ["FBI"]
 
 
@@ -236,6 +268,17 @@ def test_max_limit_enforced(client, db_session):
     assert resp_neg_offset.status_code == 422
 
 
+def test_invalid_limit_rejected(client, db_session):
+    source = _make_source(db_session, "fbi")
+    _make_case(db_session, source=source, external_id="1")
+
+    resp_zero = client.get(API, params={"limit": 0})
+    assert resp_zero.status_code == 422
+
+    resp_negative = client.get(API, params={"limit": -5})
+    assert resp_negative.status_code == 422
+
+
 def test_total_count_independent_of_page_size(client, db_session):
     source = _make_source(db_session, "fbi")
     for i in range(7):
@@ -256,7 +299,7 @@ def test_stable_ordering_across_pages(client, db_session):
 
     seen_ids = set()
     for offset in (0, 2, 4):
-        resp = client.get(API, params={"limit": 2, "offset": offset, "sort": "created_at", "order": "desc"})
+        resp = client.get(API, params={"limit": 2, "offset": offset, "sort_by": "created_at", "sort_order": "desc"})
         for item in resp.json()["items"]:
             seen_ids.add(item["case_id"])
 
@@ -271,7 +314,7 @@ def test_sort_by_missing_date_ascending(client, db_session):
     _make_case(db_session, source=source, external_id="1", display_name="LATER", missing_date=date(2023, 1, 1))
     _make_case(db_session, source=source, external_id="2", display_name="EARLIER", missing_date=date(2020, 1, 1))
 
-    resp = client.get(API, params={"sort": "missing_date", "order": "asc"})
+    resp = client.get(API, params={"sort_by": "missing_date", "sort_order": "asc"})
     names = [item["display_name"] for item in resp.json()["items"]]
     assert names == ["EARLIER", "LATER"]
 
@@ -281,19 +324,38 @@ def test_sort_descending(client, db_session):
     _make_case(db_session, source=source, external_id="1", display_name="LATER", missing_date=date(2023, 1, 1))
     _make_case(db_session, source=source, external_id="2", display_name="EARLIER", missing_date=date(2020, 1, 1))
 
-    resp = client.get(API, params={"sort": "missing_date", "order": "desc"})
+    resp = client.get(API, params={"sort_by": "missing_date", "sort_order": "desc"})
     names = [item["display_name"] for item in resp.json()["items"]]
     assert names == ["LATER", "EARLIER"]
+
+
+def test_sort_by_name(client, db_session):
+    source = _make_source(db_session, "fbi")
+    _make_case(db_session, source=source, external_id="1", display_name="ZEBRA SAMPLE")
+    _make_case(db_session, source=source, external_id="2", display_name="ALPHA SAMPLE")
+
+    resp = client.get(API, params={"sort_by": "name", "sort_order": "asc"})
+    names = [item["display_name"] for item in resp.json()["items"]]
+    assert names == ["ALPHA SAMPLE", "ZEBRA SAMPLE"]
+
+
+def test_sort_by_created_at_and_updated_at_are_accepted(client, db_session):
+    source = _make_source(db_session, "fbi")
+    _make_case(db_session, source=source, external_id="1")
+
+    for field in ("created_at", "updated_at"):
+        resp = client.get(API, params={"sort_by": field})
+        assert resp.status_code == 200
 
 
 def test_invalid_sort_field_rejected(client, db_session):
     source = _make_source(db_session, "fbi")
     _make_case(db_session, source=source, external_id="1")
 
-    resp = client.get(API, params={"sort": "not_a_real_field"})
+    resp = client.get(API, params={"sort_by": "not_a_real_field"})
     assert resp.status_code == 422
 
-    resp_order = client.get(API, params={"order": "sideways"})
+    resp_order = client.get(API, params={"sort_order": "sideways"})
     assert resp_order.status_code == 422
 
 
@@ -315,7 +377,7 @@ def test_list_response_is_compact_summary_shape(client, db_session):
     expected_keys = {
         "case_id", "person_id", "display_name", "sex", "missing_date", "missing_city",
         "missing_state", "missing_country", "primary_photo_url", "investigating_agency",
-        "source_names", "updated_at",
+        "source_codes", "source_names", "updated_at",
     }
     assert set(item.keys()) == expected_keys
     assert "contributed_fields" not in item
@@ -351,7 +413,9 @@ def test_source_names_present_in_list(client, db_session):
     _make_case(db_session, source=source, external_id="1")
 
     resp = client.get(API)
-    assert resp.json()["items"][0]["source_names"] == ["Federal Bureau of Investigation"]
+    item = resp.json()["items"][0]
+    assert item["source_codes"] == ["fbi"]
+    assert item["source_names"] == ["Federal Bureau of Investigation"]
 
 
 # --- detail response ----------------------------------------------------------------
@@ -415,8 +479,8 @@ def test_detail_includes_provenance_sources(client, db_session):
     resp = client.get(f"{API}/{case.id}")
     sources = resp.json()["sources"]
     assert len(sources) == 1
-    assert sources[0]["source_code"] == "fbi"
-    assert sources[0]["source_name"] == "Federal Bureau of Investigation"
+    assert sources[0]["code"] == "fbi"
+    assert sources[0]["name"] == "Federal Bureau of Investigation"
     assert sources[0]["external_id"] == "ext-123"
     assert sources[0]["contributed_fields"] == {"display_name": "SAMPLE PERSON"}
     assert "first_seen_at" in sources[0]
@@ -443,7 +507,7 @@ def test_case_sources_endpoint(client, db_session):
     assert resp.status_code == 200
     body = resp.json()
     assert len(body) == 1
-    assert body[0]["source_code"] == "fbi"
+    assert body[0]["code"] == "fbi"
 
 
 def test_case_detail_not_found(client, db_session):

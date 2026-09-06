@@ -34,8 +34,8 @@ class CaseSourceRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    source_code: str
-    source_name: str
+    code: str
+    name: str
     external_id: str
     source_url: str
     link_method: str
@@ -59,6 +59,7 @@ class CaseSummaryRead(BaseModel):
     missing_country: str | None
     primary_photo_url: str | None
     investigating_agency: str | None
+    source_codes: list[str]
     source_names: list[str]
     updated_at: datetime
 

@@ -106,19 +106,20 @@ def _primary_photo_url(photos: list[dict] | None) -> str | None:
     return photos[0].get("url")
 
 
-def _bulk_source_names(db: Session, case_ids: list[UUID]) -> dict[UUID, list[str]]:
-    """One query for the whole page of cases, not one per row."""
+def _bulk_source_info(db: Session, case_ids: list[UUID]) -> dict[UUID, list[tuple[str, str]]]:
+    """One query for the whole page of cases, not one per row. Maps case_id -> a list of
+    (source_code, source_name) pairs, one per contributing SourceRecord."""
     if not case_ids:
         return {}
     rows = db.execute(
-        select(CaseSource.case_id, Source.name)
+        select(CaseSource.case_id, Source.code, Source.name)
         .join(SourceRecord, CaseSource.source_record_id == SourceRecord.id)
         .join(Source, SourceRecord.source_id == Source.id)
         .where(CaseSource.case_id.in_(case_ids))
     ).all()
-    result: dict[UUID, list[str]] = {}
-    for case_id, name in rows:
-        result.setdefault(case_id, []).append(name)
+    result: dict[UUID, list[tuple[str, str]]] = {}
+    for case_id, code, name in rows:
+        result.setdefault(case_id, []).append((code, name))
     return result
 
 
@@ -132,8 +133,8 @@ def _case_sources(db: Session, case_id: UUID) -> list[CaseSourceRead]:
     ).all()
     return [
         CaseSourceRead(
-            source_code=src.code,
-            source_name=src.name,
+            code=src.code,
+            name=src.name,
             external_id=source_record.external_id,
             source_url=source_record.source_url,
             link_method=case_source.link_method,
@@ -161,8 +162,8 @@ def list_cases(
     hair_color: str | None = Query(default=None),
     eye_color: str | None = Query(default=None),
     source: str | None = Query(default=None, description="Source code, e.g. 'fbi'"),
-    sort: SortField = Query(default="created_at"),
-    order: SortOrder = Query(default="desc"),
+    sort_by: SortField = Query(default="created_at"),
+    sort_order: SortOrder = Query(default="desc"),
     limit: int = Query(default=DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
 ) -> CaseListResponse:
@@ -185,8 +186,8 @@ def list_cases(
 
     total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
 
-    sort_column = _SORT_COLUMNS[sort]
-    order_fn = sort_column.desc() if order == "desc" else sort_column.asc()
+    sort_column = _SORT_COLUMNS[sort_by]
+    order_fn = sort_column.desc() if sort_order == "desc" else sort_column.asc()
 
     page_stmt = (
         base.options(contains_eager(Case.person))
@@ -198,7 +199,7 @@ def list_cases(
     )
     cases = list(db.scalars(page_stmt).unique())
 
-    source_names = _bulk_source_names(db, [c.id for c in cases])
+    source_info = _bulk_source_info(db, [c.id for c in cases])
 
     items = [
         CaseSummaryRead(
@@ -212,7 +213,8 @@ def list_cases(
             missing_country=c.missing_country,
             primary_photo_url=_primary_photo_url(c.person.photos),
             investigating_agency=c.investigating_agency,
-            source_names=source_names.get(c.id, []),
+            source_codes=[code for code, _ in source_info.get(c.id, [])],
+            source_names=[name for _, name in source_info.get(c.id, [])],
             updated_at=c.updated_at,
         )
         for c in cases

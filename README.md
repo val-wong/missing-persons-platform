@@ -121,8 +121,8 @@ full filtered result set, independent of `limit`/`offset`:
 
 ### Sorting
 
-`sort` — one of `name`, `missing_date`, `created_at` (default), `updated_at`.
-`order` — `asc` or `desc` (default `desc`). Any other value for either parameter is
+`sort_by` — one of `name`, `missing_date`, `created_at` (default), `updated_at`.
+`sort_order` — `asc` or `desc` (default `desc`). Any other value for either parameter is
 rejected with `422`, not silently ignored. Ordering always has a stable tie-break, so
 paging through results never skips or repeats a row.
 
@@ -140,6 +140,7 @@ paging through results never skips or repeats a row.
   "missing_country": null,
   "primary_photo_url": "https://example.org/sample-photo.jpg",
   "investigating_agency": "Federal Bureau of Investigation",
+  "source_codes": ["fbi"],
   "source_names": ["Federal Bureau of Investigation"],
   "updated_at": "2026-01-01T00:00:00Z"
 }
@@ -157,8 +158,8 @@ schema), and a `sources` array — one entry per contributing `SourceRecord`:
 
 ```json
 {
-  "source_code": "fbi",
-  "source_name": "Federal Bureau of Investigation",
+  "code": "fbi",
+  "name": "Federal Bureau of Investigation",
   "external_id": "example-external-id",
   "source_url": "https://www.fbi.gov/wanted/kidnap/sample-person",
   "link_method": "fbi_deterministic_normalization_v1",
