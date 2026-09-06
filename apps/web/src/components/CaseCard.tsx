@@ -1,58 +1,39 @@
 import { Link } from "react-router-dom";
 import type { CaseSummaryRead } from "../api/types";
 import { PhotoThumbnail } from "./PhotoThumbnail";
-
-function formatLocation(city: string | null, state: string | null, country: string | null): string | null {
-  const parts = [city, state, country].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? parts.join(", ") : null;
-}
+import { SourceBadge } from "./SourceBadge";
+import { formatDateOnly, formatLocation } from "../utils/format";
 
 export function CaseCard({ item }: { item: CaseSummaryRead }) {
   const location = formatLocation(item.missing_city, item.missing_state, item.missing_country);
+  const metaParts = [
+    item.sex,
+    item.missing_date ? `Missing since ${formatDateOnly(item.missing_date)}` : null,
+    location,
+  ].filter((part): part is string => Boolean(part));
 
   return (
+    // The card's only link (the name) is CSS-"stretched" to cover the whole card via
+    // .case-card-name a::after, so the entire card is clickable without a div standing
+    // in for a real link -- there is exactly one real <a>, with its own accessible name.
     <li className="case-card">
       <PhotoThumbnail src={item.primary_photo_url} alt={`Photo of ${item.display_name}`} className="case-card-photo" />
       <div className="case-card-body">
-        <h3 className="case-card-name">
-          <Link to={`/cases/${item.case_id}`}>{item.display_name}</Link>
-        </h3>
-        <dl className="case-card-facts">
-          {item.sex && (
-            <div>
-              <dt>Sex</dt>
-              <dd>{item.sex}</dd>
+        <div className="case-card-heading">
+          <h3 className="case-card-name">
+            <Link to={`/cases/${item.case_id}`}>{item.display_name}</Link>
+          </h3>
+          {item.source_codes.length > 0 && (
+            <div className="source-badges">
+              {item.source_codes.map((code) => (
+                <SourceBadge key={code} code={code} />
+              ))}
             </div>
           )}
-          {item.missing_date && (
-            <div>
-              <dt>Missing since</dt>
-              <dd>{item.missing_date}</dd>
-            </div>
-          )}
-          {location && (
-            <div>
-              <dt>Last known location</dt>
-              <dd>{location}</dd>
-            </div>
-          )}
-          {item.investigating_agency && (
-            <div>
-              <dt>Investigating agency</dt>
-              <dd>{item.investigating_agency}</dd>
-            </div>
-          )}
-          {item.source_names.length > 0 && (
-            <div>
-              <dt>Source</dt>
-              <dd>{item.source_names.join(", ")}</dd>
-            </div>
-          )}
-        </dl>
-        <p className="case-card-updated">Last updated {item.updated_at.slice(0, 10)}</p>
-        <Link to={`/cases/${item.case_id}`} className="case-card-link">
-          View case details
-        </Link>
+        </div>
+
+        {metaParts.length > 0 && <p className="case-card-meta">{metaParts.join(" · ")}</p>}
+        {item.investigating_agency && <p className="case-card-agency">{item.investigating_agency}</p>}
       </div>
     </li>
   );

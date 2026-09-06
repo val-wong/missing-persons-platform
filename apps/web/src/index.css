@@ -55,10 +55,9 @@ button {
   max-width: 60ch;
 }
 
+/* --- Search form: primary name search + secondary "Advanced filters" disclosure --- */
+
 .search-filters {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 1rem;
   padding: 1rem;
   margin-bottom: 1.5rem;
   background: var(--color-surface);
@@ -66,14 +65,50 @@ button {
   border-radius: 8px;
 }
 
+.primary-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.primary-search .filter-field-wide {
+  flex: 1 1 260px;
+}
+
+.primary-search-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.advanced-filters {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.advanced-filters summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
+
+.advanced-filters summary:hover {
+  color: var(--color-text);
+}
+
+.advanced-filters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
 .filter-field {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-}
-
-.filter-field-wide {
-  grid-column: 1 / -1;
 }
 
 .filter-field label {
@@ -90,23 +125,26 @@ button {
   font: inherit;
 }
 
-.filter-actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.5rem;
-}
-
-.filter-actions button {
+.primary-search-actions button,
+.advanced-filters button {
   padding: 0.5rem 1rem;
   border-radius: 4px;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
 }
 
-.filter-actions button[type="submit"] {
+.primary-search-actions button[type="submit"] {
   background: var(--color-accent);
   color: #fff;
   border-color: var(--color-accent);
+}
+
+/* --- Result count + list --- */
+
+.results-count {
+  color: var(--color-muted);
+  font-weight: 600;
+  margin: 0 0 0.75rem;
 }
 
 .case-list {
@@ -118,13 +156,24 @@ button {
   gap: 1rem;
 }
 
+/* --- Case card: name/photo are the primary visual elements; the whole card is a
+   single click target via a "stretched link" on the name -- one real <a>, CSS-expanded
+   to cover the card, so there is no div standing in for a link. --- */
+
 .case-card {
+  position: relative;
   display: flex;
   gap: 1rem;
   padding: 1rem;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 8px;
+  transition: border-color 0.15s ease;
+}
+
+.case-card:hover,
+.case-card:focus-within {
+  border-color: var(--color-accent);
 }
 
 .case-card-photo,
@@ -144,31 +193,70 @@ button {
   border: 1px solid var(--color-border);
 }
 
+.case-card-body {
+  min-width: 0;
+}
+
+.case-card-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .case-card-name {
-  margin: 0 0 0.5rem;
-}
-
-.case-card-facts {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.15rem 0.75rem;
-  margin: 0 0 0.5rem;
-}
-
-.case-card-facts dt {
-  color: var(--color-muted);
-  font-weight: 600;
-}
-
-.case-card-facts dd {
   margin: 0;
+  font-size: 1.1rem;
 }
 
-.case-card-updated {
-  color: var(--color-muted);
-  font-size: 0.8rem;
-  margin: 0 0 0.5rem;
+.case-card-name a {
+  color: var(--color-text);
+  text-decoration: none;
 }
+
+.case-card-name a:hover {
+  text-decoration: underline;
+}
+
+.case-card-name a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.case-card-meta {
+  color: var(--color-text);
+  margin: 0.35rem 0 0;
+}
+
+.case-card-agency {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0;
+}
+
+.source-badges {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.source-badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* --- Pagination --- */
 
 .pagination {
   display: flex;
@@ -194,6 +282,84 @@ button {
   color: #b42318;
 }
 
+/* --- Case detail: hero header (name, primary photo, source badges, key facts) --- */
+
+.case-hero {
+  display: flex;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  margin-bottom: 1.5rem;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.case-hero-photos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+.hero-photo-primary,
+.case-hero-photos .photo-placeholder {
+  width: 200px;
+  height: 200px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+}
+
+.hero-photo-secondary-list {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0;
+  margin: 0;
+  max-width: 200px;
+}
+
+.hero-photo-secondary,
+.hero-photo-secondary-list .photo-placeholder {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  font-size: 0.55rem;
+}
+
+.case-hero-summary {
+  flex: 1;
+  min-width: 0;
+}
+
+.case-hero-summary h2 {
+  margin: 0 0 0.5rem;
+}
+
+.hero-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 1rem 0 0;
+}
+
+.hero-fact dt {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.hero-fact dd {
+  margin: 0.1rem 0 0;
+  font-size: 1rem;
+}
+
+/* --- Secondary detail sections: a readable facts list, not a database table --- */
+
 .fact {
   display: grid;
   grid-template-columns: 200px 1fr;
@@ -211,21 +377,16 @@ button {
   margin: 0;
 }
 
-.photo-gallery {
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  padding: 0;
+.circumstances {
+  max-width: 70ch;
 }
 
-.detail-photo {
-  width: 160px;
-  height: 160px;
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--color-border);
+.circumstances p {
+  line-height: 1.7;
+  white-space: pre-line;
 }
+
+/* --- Source information: primary facts visible, technical internals collapsible --- */
 
 .source-list {
   list-style: none;
@@ -242,12 +403,71 @@ button {
   border-radius: 8px;
 }
 
+.source-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.source-card-heading h4 {
+  margin: 0;
+}
+
+.technical-provenance {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.technical-provenance summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.technical-provenance summary:hover {
+  color: var(--color-text);
+}
+
+.technical-provenance-label {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--color-muted);
+}
+
 @media (max-width: 600px) {
   .case-card {
     flex-direction: column;
   }
 
+  .case-card-name a::after {
+    /* On a stacked card, stretch from the card's own boundary rather than relying on
+       an ancestor being position:relative in a way that could clip on some browsers. */
+    inset: 0;
+  }
+
   .fact {
     grid-template-columns: 1fr;
+  }
+
+  .case-hero {
+    flex-direction: column;
+  }
+
+  .hero-photo-primary,
+  .case-hero-photos .photo-placeholder {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+  }
+
+  .primary-search {
+    align-items: stretch;
+  }
+
+  .primary-search-actions {
+    justify-content: flex-start;
   }
 }

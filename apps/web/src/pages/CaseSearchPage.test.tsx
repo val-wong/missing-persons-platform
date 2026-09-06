@@ -101,12 +101,14 @@ describe("CaseSearchPage", () => {
     });
   });
 
-  it("sends a filter parameter", async () => {
+  it("sends a filter parameter from the advanced filters disclosure", async () => {
     mockSearchCases.mockResolvedValue({ total: 0, limit: 25, offset: 0, items: [] });
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(mockSearchCases).toHaveBeenCalled());
 
+    // Advanced filters start collapsed -- a real visitor must open them first.
+    await user.click(screen.getByText(/advanced filters/i));
     await user.type(screen.getByLabelText(/missing from state/i), "CO");
     await user.click(screen.getByRole("button", { name: /^search$/i }));
 
@@ -116,12 +118,13 @@ describe("CaseSearchPage", () => {
     });
   });
 
-  it("sends sorting parameters", async () => {
+  it("sends sorting parameters from the advanced filters disclosure", async () => {
     mockSearchCases.mockResolvedValue({ total: 0, limit: 25, offset: 0, items: [] });
     const user = userEvent.setup();
     renderPage();
     await waitFor(() => expect(mockSearchCases).toHaveBeenCalled());
 
+    await user.click(screen.getByText(/advanced filters/i));
     await user.selectOptions(screen.getByLabelText(/sort by/i), "name");
     await user.selectOptions(screen.getByLabelText(/sort direction/i), "asc");
     await user.click(screen.getByRole("button", { name: /^search$/i }));
@@ -170,5 +173,30 @@ describe("CaseSearchPage", () => {
     renderPage();
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/unexpected error/i);
+  });
+
+  it("renders the total result count near the results", async () => {
+    mockSearchCases.mockResolvedValue(sampleResponse);
+    renderPage();
+
+    expect(await screen.findByText("2 cases")).toBeInTheDocument();
+  });
+
+  it("renders a source badge for each case", async () => {
+    mockSearchCases.mockResolvedValue(sampleResponse);
+    renderPage();
+
+    await screen.findByText("ALEX SAMPLE");
+    expect(screen.getAllByText("FBI").length).toBe(2);
+  });
+
+  it("gives each case exactly one accessible link to its detail page", async () => {
+    mockSearchCases.mockResolvedValue(sampleResponse);
+    renderPage();
+
+    const link = await screen.findByRole("link", { name: "ALEX SAMPLE" });
+    expect(link).toHaveAttribute("href", "/cases/11111111-1111-1111-1111-111111111111");
+    // Exactly one link per card -- no separate redundant "View details" link.
+    expect(screen.getAllByRole("link", { name: /alex sample/i })).toHaveLength(1);
   });
 });

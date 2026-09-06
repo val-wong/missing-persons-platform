@@ -60,6 +60,35 @@ function toApiParams(parsed: ParsedParams): CaseSearchParams {
   };
 }
 
+function hasActiveAdvancedFilters(filters: FilterFormValues, sortBy: SortField, sortOrder: SortOrder): boolean {
+  const {
+    sex,
+    missing_state,
+    missing_city,
+    missing_country,
+    hair_color,
+    eye_color,
+    source,
+    missing_date_from,
+    missing_date_to,
+  } = filters;
+  return (
+    Boolean(
+      sex ||
+        missing_state ||
+        missing_city ||
+        missing_country ||
+        hair_color ||
+        eye_color ||
+        source ||
+        missing_date_from ||
+        missing_date_to,
+    ) ||
+    sortBy !== "created_at" ||
+    sortOrder !== "desc"
+  );
+}
+
 export function CaseSearchPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const parsed = parseParams(searchParams);
@@ -91,7 +120,14 @@ export function CaseSearchPage() {
   return (
     <section aria-labelledby="search-heading">
       <h2 id="search-heading">Search cases</h2>
-      <SearchFilters values={filters} sortBy={sortBy} sortOrder={sortOrder} onSubmit={applySearch} onClear={clearSearch} />
+      <SearchFilters
+        values={filters}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        advancedFiltersActive={hasActiveAdvancedFilters(filters, sortBy, sortOrder)}
+        onSubmit={applySearch}
+        onClear={clearSearch}
+      />
 
       {loading && <p role="status">Loading cases…</p>}
       {error && (
@@ -104,6 +140,9 @@ export function CaseSearchPage() {
 
       {!loading && !error && data && data.items.length > 0 && (
         <>
+          <p className="results-count" aria-live="polite">
+            {data.total} {data.total === 1 ? "case" : "cases"}
+          </p>
           <ul className="case-list">
             {data.items.map((item) => (
               <CaseCard key={item.case_id} item={item} />

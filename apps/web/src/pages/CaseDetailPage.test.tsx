@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CaseDetailPage } from "./CaseDetailPage";
@@ -89,9 +90,40 @@ describe("CaseDetailPage", () => {
     expect(screen.getByText("130 to 140 pounds")).toBeInTheDocument();
   });
 
-  it("renders provenance information", async () => {
+  it("renders key person/case facts in the hero", async () => {
     mockGetCase.mockResolvedValue(sampleCase);
     renderDetail("case-1");
+
+    await screen.findByRole("heading", { name: "SAMPLE PERSON" });
+    expect(screen.getByText("Sex")).toBeInTheDocument();
+    expect(screen.getByText("Female")).toBeInTheDocument();
+    expect(screen.getByText("Weight")).toBeInTheDocument();
+    expect(screen.getByText("Missing location")).toBeInTheDocument();
+    expect(screen.getByText("Sampleton, CO, United States")).toBeInTheDocument();
+  });
+
+  it("shows the source name/badge, with technical details behind a labeled disclosure", async () => {
+    mockGetCase.mockResolvedValue(sampleCase);
+    renderDetail("case-1");
+
+    await screen.findByRole("heading", { name: "SAMPLE PERSON" });
+    // Renders twice: the hero badge and the source card's own badge.
+    expect(screen.getAllByText("FBI").length).toBeGreaterThanOrEqual(1);
+    // jsdom doesn't apply the native collapsed-<details> hiding a real browser does
+    // (that's a jsdom fidelity limit, not testable here), so this checks the disclosure
+    // exists and starts closed, rather than asserting the content is absent from the DOM.
+    const details = screen.getByText(/technical provenance details/i).closest("details");
+    expect(details).not.toBeNull();
+    expect(details).not.toHaveAttribute("open");
+  });
+
+  it("reveals technical provenance details when expanded", async () => {
+    mockGetCase.mockResolvedValue(sampleCase);
+    const user = userEvent.setup();
+    renderDetail("case-1");
+
+    await screen.findByRole("heading", { name: "SAMPLE PERSON" });
+    await user.click(screen.getByText(/technical provenance details/i));
 
     expect(await screen.findByText("example-external-id")).toBeInTheDocument();
   });
@@ -100,7 +132,7 @@ describe("CaseDetailPage", () => {
     mockGetCase.mockResolvedValue(sampleCase);
     renderDetail("case-1");
 
-    const link = await screen.findByRole("link", { name: /view original source listing/i });
+    const link = await screen.findByRole("link", { name: /original source/i });
     expect(link).toHaveAttribute("href", sampleCase.sources[0].source_url);
     expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
     expect(link).toHaveAttribute("target", "_blank");
@@ -114,14 +146,44 @@ describe("CaseDetailPage", () => {
     renderDetail("case-1");
 
     await screen.findByRole("heading", { name: "SAMPLE PERSON" });
-    expect(screen.queryByRole("link", { name: /view original source listing/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /original source/i })).not.toBeInTheDocument();
   });
 
   it("handles a case with no photos", async () => {
     mockGetCase.mockResolvedValue(sampleCase);
     renderDetail("case-1");
 
-    expect(await screen.findByText(/no photos available/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/photo not available/i)).toBeInTheDocument();
+  });
+
+  it("renders without crashing when nearly every optional field is null", async () => {
+    mockGetCase.mockResolvedValue({
+      ...sampleCase,
+      case_status: null,
+      missing_date: null,
+      missing_city: null,
+      missing_county: null,
+      missing_state: null,
+      missing_country: null,
+      age_at_missing: null,
+      circumstances: null,
+      investigating_agency: null,
+      agency_case_number: null,
+      person: {
+        ...sampleCase.person,
+        sex: null,
+        hair_color: null,
+        eye_color: null,
+        aliases: null,
+        distinguishing_characteristics: null,
+        height: { min_cm: null, max_cm: null, raw: null, temporal_context: null },
+        weight: { min_kg: null, max_kg: null, raw: null, temporal_context: null },
+      },
+    });
+    renderDetail("case-1");
+
+    expect(await screen.findByRole("heading", { name: "SAMPLE PERSON" })).toBeInTheDocument();
+    expect(screen.queryByText("Circumstances")).not.toBeInTheDocument();
   });
 
   it("shows a not-found message for a 404", async () => {
